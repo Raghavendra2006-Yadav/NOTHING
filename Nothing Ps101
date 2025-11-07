@@ -1,0 +1,192 @@
+import React, { useEffect, useState, useCallback } from "react";
+
+// Single-file React component for "What's for Dinner - Recipe Fusion Engine"
+// - Uses TheMealDB public API
+// - Tailwind CSS utility classes assumed available in hosting app
+
+export default function RecipeFusionEngine() {
+  const [categories, setCategories] = useState([]);
+  const [areas, setAreas] = useState([]);
+
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedArea, setSelectedArea] = useState("");
+
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Fetch lists for dropdowns on mount
+  useEffect(() => {
+    async function fetchLists() {
+      try {
+        const [cRes, aRes] = await Promise.all([
+          fetch("https://www.themealdb.com/api/json/v1/1/list.php?c=list"),
+          fetch("https://www.themealdb.com/api/json/v1/1/list.php?a=list"),
+        ]);
+
+        const cJson = await cRes.json();
+        const aJson = await aRes.json();
+
+        setCategories(Array.isArray(cJson.meals) ? cJson.meals.map((m) => m.strCategory) : []);
+        setAreas(Array.isArray(aJson.meals) ? aJson.meals.map((m) => m.strArea) : []);
+
+        // Set sensible defaults (first items) to encourage a quick result
+        if (cJson.meals && cJson.meals.length) setSelectedCategory(cJson.meals[0].strCategory);
+        if (aJson.meals && aJson.meals.length) setSelectedArea(aJson.meals[0].strArea);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load categories or areas. Check your network or TheMealDB availability.");
+      }
+    }
+    fetchLists();
+  }, []);
+
+  // Helper: fetch filtered lists and compute intersection by idMeal
+  const findFusionRecipes = useCallback(async (category, area) => {
+    if (!category || !area) return;
+    setLoading(true);
+    setError("");
+    setResults([]);
+
+    try {
+      const cUrl = `https://www.themealdb.com/api/json/v1/1/filter.php?c=${encodeURIComponent(category)}`;
+      const aUrl = `https://www.themealdb.com/api/json/v1/1/filter.php?a=${encodeURIComponent(area)}`;
+
+      // Wait for both responses concurrently
+      const [cRes, aRes] = await Promise.all([fetch(cUrl), fetch(aUrl)]);
+      const [cJson, aJson] = await Promise.all([cRes.json(), aRes.json()]);
+
+      const catMeals = Array.isArray(cJson.meals) ? cJson.meals : [];
+      const areaMeals = Array.isArray(aJson.meals) ? aJson.meals : [];
+
+      // Quick intersection by idMeal using Map
+      const map = new Map();
+      for (const m of catMeals) {
+        map.set(m.idMeal, m);
+      }
+
+      const intersection = [];
+      for (const m of areaMeals) {
+        if (map.has(m.idMeal)) {
+          // prefer the object with thumbnail/title from either side (they're similar)
+          intersection.push(map.get(m.idMeal));
+        }
+      }
+
+      setResults(intersection);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to fetch recipes. Try again later.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Trigger search when user clicks button
+  const handleSearch = (e) => {
+    e?.preventDefault();
+    findFusionRecipes(selectedCategory, selectedArea);
+  };
+
+  // Optional: auto-search whenever both selections change
+  useEffect(() => {
+    if (selectedCategory && selectedArea) {
+      // small debounce pattern: immediate here for simplicity
+      findFusionRecipes(selectedCategory, selectedArea);
+    }
+  }, [selectedCategory, selectedArea, findFusionRecipes]);
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg p-6">
+        <header className="mb-6">
+          <h1 className="text-2xl font-semibold">What's for Dinner — Recipe Fusion Engine</h1>
+          <p className="mt-1 text-sm text-gray-600">Combine a Recipe Category with a global Area/Cuisine and find meals that match both.</p>
+        </header>
+
+        <form className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-6" onSubmit={handleSearch}>
+          <div>
+            <label className="block text-sm font-medium mb-1">Recipe Category</label>
+            <select
+              className="w-full border rounded px-3 py-2"
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+            >
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Area / Cuisine</label>
+            <select
+              className="w-full border rounded px-3 py-2"
+              value={selectedArea}
+              onChange={(e) => setSelectedArea(e.target.value)}
+            >
+              {areas.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="md:col-span-1">
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white font-medium py-2 rounded hover:bg-blue-700"
+            >
+              Find Fusion Recipes
+            </button>
+          </div>
+        </form>
+
+        <section>
+          {loading && (
+            <div className="py-12 text-center text-gray-600">Loading fusion recipes…</div>
+          )}
+
+          {error && (
+            <div className="py-4 px-3 bg-red-50 text-red-700 rounded">{error}</div>
+          )}
+
+          {!loading && !error && (
+            <>
+              {results.length === 0 ? (
+                <div className="py-12 text-center text-gray-500">
+                  No fusion recipes found for <strong>{selectedCategory}</strong> + <strong>{selectedArea}</strong>.
+                  <div className="text-sm mt-2 text-gray-400">Try a different category, area, or remove filters.</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+                  {results.map((r) => (
+                    <article key={r.idMeal} className="bg-white rounded-lg shadow-sm overflow-hidden">
+                      <img
+                        loading="lazy"
+                        src={r.strMealThumb}
+                        alt={r.strMeal}
+                        className="w-full h-40 object-cover"
+                      />
+                      <div className="p-3">
+                        <h3 className="text-sm font-semibold">{r.strMeal}</h3>
+                        <p className="text-xs text-gray-500 mt-1">ID: {r.idMeal}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+
+        <footer className="mt-6 text-xs text-gray-400">
+          Data from <a href="https://themealdb.com" target="_blank" rel="noreferrer" className="underline">TheMealDB</a>. Built for fast fusion discovery. (Uses only public endpoints.)
+        </footer>
+      </div>
+    </div>
+  );
+}
